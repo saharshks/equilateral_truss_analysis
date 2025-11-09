@@ -1,28 +1,39 @@
-"""
-Equilateral Triangular Truss Analysis
--------------------------------------
-Author : Your Name
-Date   : 2025-11-09
-"""
-
 import numpy as np
 import math
 import matplotlib.pyplot as plt
 
-# INPUTS
-P = 1.0               # applied load magnitude (units: N)
-E = 200e9             # Young's modulus (Pa)
-A = 0.01              # cross-sectional area (m^2)
-a = 1.0               # side length (m)
+# ---------------------------------------------------------------
+# USER INPUTS
+# ---------------------------------------------------------------
+print("Equilateral Triangular Truss Analysis")
+try:
+    A = float(input("Enter cross-sectional area A (m²): "))
+    E = float(input("Enter Young’s Modulus E (Pa): "))
+    a = float(input("Enter side length a (m): "))
+    P = float(input("Enter load at top node P (N): "))
+except ValueError:
+    print("Invalid input! Please enter numerical values only.")
+    exit()
 
-# Node coordinates
+print("\nSupport Condition for Node 2:")
+print("  1 → Fixed support (no movement)")
+print("  2 → Roller support (vertical restrained, horizontal free)")
+node2_type = input("Enter 1 or 2:")
+
+if node2_type not in ["1", "2"]:
+    print("Invalid choice! Defaulting to roller support at Node 2.")
+    node2_type = "2"
+
+# ---------------------------------------------------------------
+# NODE COORDINATES
+# ---------------------------------------------------------------
 nodes = {
     1: np.array([0.0, 0.0]),
     2: np.array([a, 0.0]),
     3: np.array([a/2.0, math.sqrt(3)/2.0*a])
 }
 
-# Element connectivity
+# ELEMENT CONNECTIVITY
 elements = {
     1: (1, 2),
     2: (1, 3),
@@ -32,6 +43,9 @@ elements = {
 ndof = 2 * len(nodes)
 K_global = np.zeros((ndof, ndof))
 
+# ---------------------------------------------------------------
+# ELEMENT STIFFNESS MATRIX FUNCTION
+# ---------------------------------------------------------------
 def element_stiffness(i, j):
     xi, yi = nodes[i]
     xj, yj = nodes[j]
@@ -44,79 +58,110 @@ def element_stiffness(i, j):
         [-c*c, -c*s,  c*c,  c*s],
         [-c*s, -s*s,  c*s,  s*s]
     ])
-    return k
+    return k, L, c, s
 
-# Assemble global stiffness matrix
+# ---------------------------------------------------------------
+# GLOBAL STIFFNESS MATRIX ASSEMBLY
+# ---------------------------------------------------------------
 for e, (i, j) in elements.items():
-    k = element_stiffness(i, j)
+    k, L, c, s = element_stiffness(i, j)
     dof_map = [2*(i-1), 2*(i-1)+1, 2*(j-1), 2*(j-1)+1]
-    for a_ in range(4):
-        for b_ in range(4):
-            K_global[dof_map[a_], dof_map[b_]] += k[a_, b_]
+    for a_i in range(4):
+        for b_i in range(4):
+            K_global[dof_map[a_i], dof_map[b_i]] += k[a_i, b_i]
 
-# Load vector (vertical load at node 3)
+# ---------------------------------------------------------------
+# LOAD VECTOR
+# ---------------------------------------------------------------
 F = np.zeros(ndof)
-F[2*(3-1)+1] = -P
+F[2*(3-1)+1] = -P  # vertical downward load at node 3
 
-# Boundary conditions: node1 fixed (dofs 0,1), node2 v constrained (dof 3)
-fixed_dofs = [0, 1, 3]
+# ---------------------------------------------------------------
+# BOUNDARY CONDITIONS
+# ---------------------------------------------------------------
+fixed_dofs = [0, 1]  # Node 1 fixed
+
+if node2_type == "1":
+    fixed_dofs += [2, 3]  # Node 2 fixed
+    support_label = "Fixed"
+else:
+    fixed_dofs += [3]     # Node 2 roller
+    support_label = "Roller"
+
 free_dofs = [i for i in range(ndof) if i not in fixed_dofs]
 
-# Reduce and solve
+# ---------------------------------------------------------------
+# SOLVE FOR DISPLACEMENTS
+# ---------------------------------------------------------------
 K_ff = K_global[np.ix_(free_dofs, free_dofs)]
+K_fr = K_global[np.ix_(free_dofs, fixed_dofs)]
 F_f = F[free_dofs]
-u_f = np.linalg.solve(K_ff, F_f)
 
-# Full displacement vector
+U_f = np.linalg.solve(K_ff, F_f)
 U = np.zeros(ndof)
-U[free_dofs] = u_f
+U[free_dofs] = U_f
 
-# Member forces
+# ---------------------------------------------------------------
+# REACTIONS
+# ---------------------------------------------------------------
+R = K_global @ U - F
+
+# ---------------------------------------------------------------
+# MEMBER FORCES
+# ---------------------------------------------------------------
 member_forces = {}
-print("\nMember Forces (positive = tension):")
 for e, (i, j) in elements.items():
-    xi, yi = nodes[i]
-    xj, yj = nodes[j]
-    L = math.hypot(xj - xi, yj - yi)
-    c = (xj - xi) / L
-    s = (yj - yi) / L
+    _, L, c, s = element_stiffness(i, j)
     dof_map = [2*(i-1), 2*(i-1)+1, 2*(j-1), 2*(j-1)+1]
-    u_e = U[dof_map]
-    F_e = (E*A/L) * np.array([-c, -s, c, s]).dot(u_e)
-    member_forces[e] = F_e
-    nature = "Tension" if F_e > 0 else "Compression"
-    print(f"  Member {i}-{j}: {F_e:.6g} N ({nature})")
+    Ue = U[dof_map]
+    T = (E / L) * np.array([-c, -s, c, s])
+    F_int = (A * T) @ Ue
+    member_forces[e] = F_int
 
-# Reactions
-R = K_global.dot(U) - F
-print("\nSupport Reactions:")
-print(f"  Node 1: Rx = {R[0]:.6g} N, Ry = {R[1]:.6g} N")
-print(f"  Node 2: Rx = {R[2]:.6g} N, Ry = {R[3]:.6g} N")
+# ---------------------------------------------------------------
+# OUTPUT RESULTS
+# ---------------------------------------------------------------
+print("\n================= RESULTS =================")
+print(f"Support Type at Node 2: {support_label}")
+print("\nNodal Displacements (in meters):")
+for n in range(1, len(nodes)+1):
+    print(f"  Node {n}: Ux = {U[2*(n-1)]:.6e}, Uy = {U[2*(n-1)+1]:.6e}")
 
-# Plot free-body diagram
-fig, ax = plt.subplots(figsize=(6,6))
-ax.set_aspect('equal', 'box')
+print("\nReaction Forces (in N):")
+for n in [1, 2]:
+    print(f"  Node {n}: Rx = {R[2*(n-1)]:.3f}, Ry = {R[2*(n-1)+1]:.3f}")
 
+print("\nMember Axial Forces (in N):")
+for e in elements:
+    print(f"  Member {e} ({elements[e][0]}-{elements[e][1]}): {member_forces[e]:.3f}")
+
+# ---------------------------------------------------------------
+# FBD PLOT
+# ---------------------------------------------------------------
+plt.figure(figsize=(6,6))
 for e, (i, j) in elements.items():
     xi, yi = nodes[i]
     xj, yj = nodes[j]
-    ax.plot([xi, xj], [yi, yj], 'k-', lw=2)
-    mx, my = (xi+xj)/2, (yi+yj)/2
-    f = member_forces[e]
-    text = f"F{i}{j} = {f/abs(P):.3f}·P  ({'T' if f>0 else 'C'})"
-    ax.text(mx, my, text, fontsize=9, ha='center', va='center')
+    plt.plot([xi, xj], [yi, yj], 'k-', lw=2)
+    cx, cy = (xi+xj)/2, (yi+yj)/2
+    plt.text(cx, cy, f"{e}", color='blue', fontsize=10)
 
-for nid, (x,y) in nodes.items():
-    ax.plot(x, y, 'ro')
-    ax.text(x+0.02, y-0.05, f"Node {nid}", fontsize=10)
+# Supports
+plt.plot(nodes[1][0], nodes[1][1], 'rs', label="Fixed Support (Node 1)")
+if node2_type == "1":
+    plt.plot(nodes[2][0], nodes[2][1], 'rs', label="Fixed Support (Node 2)")
+else:
+    plt.plot(nodes[2][0], nodes[2][1], 'go', label="Roller Support (Node 2)")
 
-ax.text(nodes[1][0]-0.1, nodes[1][1]-0.1, "Fixed", color='blue')
-ax.text(nodes[2][0]+0.05, nodes[2][1]-0.1, "Roller", color='blue')
-
+# Load arrow
 x3, y3 = nodes[3]
-ax.arrow(x3, y3, 0, -0.2, head_width=0.03, color='red')
-ax.text(x3-0.05, y3-0.25, "P ↓", color='red')
+plt.arrow(x3, y3, 0, -0.2*a, head_width=0.05*a, head_length=0.05*a, color='red', label="Applied Load (P)")
 
-ax.axis('off')
-ax.set_title("Free-Body Diagram of Equilateral Truss")
+plt.text(x3+0.02*a, y3-0.1*a, "P", color='red', fontsize=12)
+plt.axis("equal")
+plt.grid(True, linestyle="--", alpha=0.5)
+plt.legend()
+plt.title("Free Body Diagram of Equilateral Triangular Truss")
 plt.show()
+
+
