@@ -16,8 +16,8 @@ except ValueError:
     exit()
 
 print("\nSupport Condition for Node 2:")
-print("  1 → Fixed support (no movement)")
-print("  2 → Roller support (vertical restrained, horizontal free)")
+print("  1 → Fixed support")
+print("  2 → Roller support")
 node2_type = input("Enter 1 or 2:")
 
 if node2_type not in ["1", "2"]:
